@@ -1,0 +1,451 @@
+---
+title: "Modeling and prediction for movies"
+output:
+  html_document:
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+  pdf_document: default
+---
+
+## Setup
+
+### Load packages
+
+
+
+```{r load-packages, message = FALSE}
+# Testing for SYNC
+library(ggplot2)
+library(dplyr)
+library(statsr)
+library(scales)
+library(GGally)
+library(reshape2)
+library(corrplot)
+```
+
+### Load data
+
+```{r load-data}
+load("movies.Rdata")
+```
+
+* * *
+
+## Part 1: Data
+
+The data set is comprised of 651 randomly sampled movies produced and released before 2016. As this data comes from random sampling of movies from imdb and rotten tomato databases - it can be said that the data is representative. Additionally, sample size is large enough - we have here 651 randomly selected movies.
+* * *
+
+## Part 2: 
+Research Question:
+The point of interest of this research is movie popularity and attributes that make the movie popular. While there are number of metrics of movie popularity - such as imdb rating or rotten tomatoes scores, Russian service KinoPoisk rating and many more - I am going to use imdb_rating as the proxy of movie popularity and analyze what variables, among many provided in the dataset, have the greatest impact the imdb rating of a movie, in the context of general conditions for linear regression.
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+Set the output of print to 38 lines which will be handy in regression model summary output (to avoid lenghty output)
+```{r}
+options('max.print' = 100)
+options("digits" = 4)
+getOption('max.print')
+```
+Since we are going to build a model with several predictors - it is useful to look for interdependent variables - so that they can be excluded from the model. One Way to spot collinearity is to build a correlation matrix and see the visualization using the heatmap
+```{r}
+cor1<-cor(movies[sapply(movies, is.numeric)], use = "complete.obs")
+corrplot(cor1)
+```
+
+PART 3.1 INTERDEPENDENT VARIABLES: PRELIMINARY EXCLUSION, and HEATMAP DISCUSSION
+There is a group of highly correlated variables - imdb_rating", audience_score", "critics_score", and "imdb_num_votes" - hence if one of them is used as an explanatory variable for the upcoming regression model - the others two must be excluded from that model - because of the potential collinearity. "dvd_rel_year" and and "imdb_rating" as well have a high correlation - but since imdb_rating is going to be our dependent variable - as a proxy of movie success - than it is safe to keep "dvd_rel_year". However, "dvd_rel_year" and "thtr_rel_year" are also highly correlated - so one of them neeeds to be dropped as an explanatory variable. The variable "runtime" also shows moderately strong correlation with "imdb_num_votes".
+
+PART 3.3 VARIABLES: PRELIMINARY CHOICE
+'imdb_rating" will be used as the proxy of a movies success and as the dependent variable. "audience_score" could have been as the proxy of movie success with no difference and the choice over the two is rather arbitrary - based on subjective preferences of the particular movie rating service. In that case, "critics_score" can be included in the upcoming regression model as an explanatory numeric variable. I chose "critics_score" over "audience_score" because "imdb_rating" is user based - non professional critic score - hence a professional critics score from Rotten Tomatoes service is preferable as a stringer, more professional view on a movie success. 
+
+I will also exclude certain variables that have no relevance to my upcoming analysis - variables that provide link for the resources ("imdb_url"), actor(1-5) - because actor is not an exclusive list of all possible actors - a feature that can complicate PREDICTIONS based on the future model (say a new actor appears and later is used for prediction but  was not listed as a factor for the actor1 variable). By the same token, the variable "director" will also be excluded from the upcoming model, as well as every variable that has a relation to release year, month or year. I will exclude studio as well - out of reasons explained above.
+
+For now, I will create a new dataframe with only the variables to be considered for the upcoming model. Some variables - such as "title" are included for the information purpose only and will not be used as explanatory variables.
+```{r}
+movies_final<-movies %>% select(title, genre, imdb_rating, critics_score, mpaa_rating, runtime, best_pic_win, best_actress_win, best_actor_win,  top200_box )
+```
+
+First identify missing values
+```{r}
+colSums(is.na(movies_final))
+```
+Handle missing values and save the results. For numeric variables I will replace with average numbers, and for factor variables with a dummy factor of choice. 
+
+```{r}
+movies_final$runtime[is.na(movies_final$runtime)] <- round(mean(movies_final$runtime, na.rm = TRUE))
+#levels(movies1$studio) <- c(levels(movies1$studio),"No Studio")
+#movies1$studio[is.na(movies1$studio)] <- "No Studio"
+colSums(is.na(movies_final))
+```
+No more missing values.
+
+Now, when the potential variables for the upcoming model are selected, lets have a quick look at  histograms of some of the variables
+
+```{r}
+typeof(movies_final$imdb_rating)
+```
+
+
+imdb_rating
+```{r}
+ggplot(data = movies_final, mapping = aes(x = imdb_rating)) + geom_bar()
+```
+
+imdb_rating looks heavily right skewed, with outliers from the left side 
+
+also some summary statistics
+```{r}
+prop.table(table(movies_final$genre))*100
+```
+It appears, that Drama is the predominant genre in our dataframe: 47 Percent, this can introduce some bias in our analyses. 
+
+A proportion table Genre and mpaa_rating grouped - 
+
+```{r}
+#prop.table(table(movies_final$genre, movies_final$mpaa_rating))*100
+prop.table(table(movies_final$genre, movies_final$mpaa_rating), margin=2)*100
+```
+genre "Drama" is dominating even when grouped with "mpaa_rating" with the exception of G rated movies - G standing for General Audience. 
+
+
+Since the variable runtime is one of the main numeric explanatory variables to consider,  we have a  quick look at the histogram and mean and median values
+```{r}
+ggplot(data = movies_final, mapping = aes(x = runtime)) + geom_bar()
+```
+
+The histtogram is right skewed, preliminary reason - some outliers and movies longer than 150 minutes
+
+Finally, let us see the scatterplot of our main numeric explanatory variable "runtime" and "imdb_rating". 
+
+```{r}
+ggplot(data = movies_final, aes(x = runtime, y = imdb_rating)) +
+  geom_jitter()
+```
+
+no obious signs of linearity.
+Check the correlation , quick
+
+```{r}
+cor(movies_final$imdb_rating, movies_final$runtime)
+```
+rather weak
+
+Scatterplot of critics_score and imdb_rating
+```{r}
+ggplot(data = movies_final, aes(x = critics_score, y = imdb_rating)) +
+  geom_jitter()
+```
+
+```{r}
+cor(movies_final$imdb_rating, movies_final$critics_score)
+```
+Pretty Strong
+
+Finally correlation between our two explanatory variables:
+
+```{r}
+cor(movies_final$runtime, movies_final$critics_score)
+```
+Assuming 0.17 to be relatively weak, and consider no colliearity between these two variables. So far, I keep both "runtime" and "crtitics_score" as explanatory variables.
+
+
+Lets look for potential outliers, in the variable runtime - since the histogram above was very much right skewed
+```{r}
+outlier1 <- boxplot.stats(movies_final$runtime)$out
+boxplot(movies_final$runtime, main="Runtime", boxwex=0.7)
+mtext(paste("Outliers: ", paste(sort(outlier1), collapse=", ")), cex=0.6)
+```
+
+There are obvious outliers and I am going to handle them  with capping: Observations that are beyond 1.5*IQR boundries, are capped by replacing observations below the lower limit -with the value of 5th percentile. Above the upper limit observations are are replaced with the value of 95th percentile.
+```{r}
+cap_outliers <- function(cap, removeNA = TRUE) {
+     runtime <- cap
+     qnt <- quantile(runtime, probs=c(.25, .75), na.rm = removeNA)
+     caps <- quantile(runtime, probs=c(.05, .95), na.rm = removeNA)
+     extremes <- 1.5 * IQR(runtime, na.rm = removeNA)
+     runtime[runtime < (qnt[1] - extremes)] <- caps[1]
+     runtime[runtime > (qnt[2] + extremes)] <- caps[2]
+     runtime
+ }
+
+runtime_capped <- cap_outliers(movies_final$runtime)
+```
+
+Lets compare before and after capping runtme boxplots
+
+```{r}
+par(mfrow = c(1, 2))
+boxplot(movies_final$runtime, main="runtime with Outliers", boxwex=0.7)
+boxplot(runtime_capped, main="runtime no Outliers", boxwex=0.7)
+```
+
+The new variable has no extreme values, and since only 17 out of 651 observations have been changed, I will permanently change the variable (column) runtime in the  dataset of our interest movie1
+
+```{r}
+movies_final[["runtime"]] <- runtime_capped
+
+```
+ 
+
+Since a decision was made to use genre as one of the main categorical explanatory variables with more than two levesls - it will be interesting to explore this variable further- in pair with a numeric variable,  "runtime". There might be some interdependence - and different genres might have different runtime - a theory that will be checked with ANOVA a little bit later.
+First visualize these two in a boxplot
+
+```{r}
+gnames <- c(levels(movies_final$genre)) # extract genre names as a vector
+gnames1 <- substr(gnames, start = 1, stop = 3)  # genres first 3 characters, otherwise X asxis names are too lengthy  
+box1 <- ggplot(movies_final, aes(x=genre, y=runtime)) +  geom_boxplot()
+box1 + scale_x_discrete(breaks=gnames, labels=gnames1) # shortened Boxplot x axis labels
+```
+
+```{r}
+gnames
+```
+
+As suspected, some genres have longer average runtime compared with others. The two variables seem to have a degree of interdependence. ANOVA one way test will clarify things further.
+
+```{r}
+an <-aov(runtime ~ genre, data = movies_final)
+summary(an)
+```
+The small p value indicates that there is indeed noticeable variance and runtime differs between different genres.  Dropping one of the variables will be the right decision - as two interdependent  explanatory variables doesn't meet the conditions for linear regression.
+EDIT THIS. I will keep "genre" and drop "runtime" because "genre" is a categorical variable with more than two levels, and would provide a range of different genres for the model training, and later it will be one of the main distinctive inputs for the prediction of a movie rating outside our dataframe. 
+
+* * *
+
+## Part 4: Modeling
+
+EXPLANATORY VARIABLES: 
+"genre", "critics_score", "mpaa_rating", "best_pic_win", "best_actress_win", "best_actor_win", "top200_box"  will be used as explanatory variables. Reasons for including "genre" and "critics_score" are explained in the Exploratory Analysis PART3.1 and 3.2.
+The rest of the variables are self-explanatory - in a way that Oscar nominations and Awards are widely accepted as success and recognition for a particular movie. "mpaa_rating" is also always present on imdb website and it might also have some impact on imdb_score - a preposition that will be checked during forward selection method
+
+METHOD: Forward Selection- Adjusted R-Sqaured method - 
+I start with single predictor regressions versus each explanatory variable, then pick a model with the Highest adjusted R-squared, add the remaining variables to the existing model and finally, pick the model with the highest adjusted R-sqauared and repeat till the addition of other variables doesn't result in a higher adjusted R-squared. 
+
+```{r}
+# Step 1
+r1 <-lm (imdb_rating~genre, data =movies_final)
+r2<-lm (imdb_rating~ critics_score, data =movies_final)
+r3<-lm (imdb_rating~ mpaa_rating, data =movies_final)
+r4<-lm (imdb_rating~ runtime, data =movies_final)
+r5 <-lm (imdb_rating~ best_pic_win, data =movies_final)
+r6 <-lm (imdb_rating~ best_actress_win, data =movies_final)
+r7 <-lm (imdb_rating~ best_actor_win, data =movies_final)
+r8 <-lm (imdb_rating~ top200_box, data =movies_final)
+
+
+summary(r1)$adj.r.squared ; summary(r2)$adj.r.squared; summary(r3)$adj.r.squared; summary(r4)$adj.r.squared; summary(r5)$adj.r.squared; summary(r6)$adj.r.squared ;summary(r7)$adj.r.squared; summary(r8)$adj.r.squared
+
+```
+Output shows the simple model with "critics_score" as the explanatory variable yields highest adjusted R-squared - hence it will be our choice as the main explanatory varibale in step 2
+
+```{r}
+# Step 2
+r1A<-lm (imdb_rating~ critics_score + genre, data =movies_final)
+r2A<-lm (imdb_rating~ critics_score +mpaa_rating, data =movies_final)
+r3A<-lm (imdb_rating~ critics_score + runtime, data =movies_final)
+r4A<-lm (imdb_rating~ critics_score + best_pic_win, data =movies_final)
+r5A<-lm (imdb_rating~ critics_score + best_actress_win, data =movies_final)
+r6A<-lm (imdb_rating~ critics_score + best_actor_win, data =movies_final)
+r7A<-lm (imdb_rating~ critics_score + top200_box, data =movies_final)
+
+summary(r1A)$adj.r.squared ; summary(r2A)$adj.r.squared; summary(r3A)$adj.r.squared; summary(r4A)$adj.r.squared; summary(r5A)$adj.r.squared; summary(r6A)$adj.r.squared; summary(r7A)$adj.r.squared
+```
+This time, the highest adjusted R-sqaure comes from critics_score + genre - hence we select them for step 3
+
+```{r}
+# Step 3
+r1AB<-lm (imdb_rating~ critics_score + genre + mpaa_rating, data =movies_final)
+r2AB<-lm (imdb_rating~ critics_score + genre + runtime, data =movies_final)
+r3AB<-lm (imdb_rating~ critics_score + genre + best_pic_win, data =movies_final)
+r4AB<-lm (imdb_rating~ critics_score + genre + best_actress_win, data =movies_final)
+r5AB<-lm (imdb_rating~ critics_score + genre + best_actor_win, data =movies_final)
+r6AB<-lm (imdb_rating~ critics_score + genre + top200_box, data =movies_final)
+
+summary(r1AB)$adj.r.squared ; summary(r2AB)$adj.r.squared; summary(r3AB)$adj.r.squared; summary(r4AB)$adj.r.squared; summary(r5AB)$adj.r.squared; summary(r6AB)$adj.r.squared
+```
+Moving on with the same logic...
+
+```{r}
+# Step 4
+r1AC<-lm (imdb_rating~ critics_score + genre + runtime + mpaa_rating, data =movies_final)
+r2AC<-lm (imdb_rating~ critics_score + genre + runtime + best_pic_win, data =movies_final)
+r3AC<-lm (imdb_rating~ critics_score + genre + runtime + best_actress_win, data =movies_final)
+r4AC<-lm (imdb_rating~ critics_score + genre + runtime + best_actor_win, data =movies_final)
+r5AC<-lm (imdb_rating~ critics_score + genre + runtime + top200_box, data =movies_final)
+
+summary(r1AC)$adj.r.squared ; summary(r2AC)$adj.r.squared; summary(r3AC)$adj.r.squared; summary(r4AC)$adj.r.squared; summary(r5AC)$adj.r.squared
+```
+
+```{r}
+# Step 5
+r1AD<-lm (imdb_rating~ critics_score + genre + runtime + best_pic_win + mpaa_rating, data =movies_final)
+r2AD<-lm (imdb_rating~ critics_score + genre + runtime + best_pic_win + best_actress_win, data =movies_final)
+r3AD<-lm (imdb_rating~ critics_score + genre + runtime + best_pic_win + best_actor_win, data =movies_final)
+r4AD<-lm (imdb_rating~ critics_score + genre + runtime + best_pic_win + top200_box, data =movies_final)
+
+summary(r1AD)$adj.r.squared ; summary(r2AD)$adj.r.squared; summary(r3AD)$adj.r.squared; summary(r4AD)$adj.r.squared
+```
+```{r}
+# Step 6
+rr1<-lm (imdb_rating~ critics_score + genre + runtime + best_pic_win + mpaa_rating + best_actress_win, data =movies_final)
+rr2<-lm (imdb_rating~ critics_score + genre + runtime + best_pic_win + mpaa_rating + best_actor_win, data =movies_final)
+rr3<-lm (imdb_rating~ critics_score + genre + runtime + best_pic_win + mpaa_rating + top200_box, data =movies_final)
+
+summary(rr1)$adj.r.squared ; summary(rr2)$adj.r.squared; summary(rr3)$adj.r.squared
+
+```
+That is it. No more improvements. We stick to the best result from step 5
+
+
+But first let us see the full summary of our model
+```{r}
+final_model <- r1AD
+summary(final_model)
+```
+Small P-value is an indication that our model is statistically significant and acceptable. 
+
+
+INTERPRETATION of the MODEL 
+Coefficients -The intercept is 4.05 which means that
+A movie with 0 critics_score, that has no genre, has a zero runtime (nonsense obiously)  that also won NO Oskar (best_pic_win = yes is the reference level), and that there was no best_actress Oskar Win, (best_actress_win = Yes is the reference level) on average has 4.04 Imdb_rating. 
+Here the intercept  is meaningless since movies with NO Directors are possible but rare and perhaps pointless in this context. 
+
+And to calculate the confidence interval for the slope genreDrama :
+
+```{r}
+ confint(final_model,  'genreDrama', level=0.95)
+```
+We are 95 percent confident that all else held equal, the model predicts that a movie with Genre Drama has an IMDB rating -0.09 to 0.28.
+Obviously, movies don't have a negative imdb rating, and this slope has to be seen in the context of the full model.
+
+
+DIAGNOSTICS of THE MODEL 
+We are looking for random scatter around zero in our residuals plot
+```{r}
+plot(final_model$residuals~movies_final$runtime)
+```
+
+Looks like we are meeting the condition of linearity accrding to the above graph.
+
+Exploring further we find:
+
+```{r}
+par(mfrow = c(1, 2))
+hist(final_model$residuals)
+qqnorm(final_model$residuals)
+qqline(final_model$residuals)
+```
+
+Histogram looks good and meets the conditions - : NERALY NORMAL RESIDUALS - Nearly normally distributed centered around zero.
+Normal Probability plot of the residuals (right) has a curvy pattern, and doesn't look ideal
+
+
+Next is residuals plot. Ideally we look for Constant Variability and  expect Homoscedasticity  -e.g. variability of residuals around 0 should be roughly constant.
+```{r}
+# Residuals plot
+ggplot(data = final_model, aes(x = .fitted, y = .resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  xlab("Fitted values") +
+  ylab("Residuals")
+```
+
+Our residuals plot shows hints of fan_shape, although generally it looks like this condition is also met - since the "fan_shape" is not that vivid
+
+
+* * *
+
+## Part 5: Prediction
+
+lm(formula = imdb_rating ~ critics_score + genre + runtime + 
+    best_pic_win + mpaa_rating, data = movies_final)
+
+Now it is time to make some predictions based on our final model and see how well it predicts imdb_rating. We will  also construct a prediction interval and interpret   the results 
+
+First I will test my model on the data I have used, so randomly select movies will be from the current sample. Later I will predict scores for movies outside this dataframe, from movies from 2016
+
+I choose random rows to see predictions. For that reason I will provide a function to 
+automate random row selection and fitting to our model. 
+
+```{r}
+# << makes the variable global
+fit_var <- function(random_movie, removeNA = TRUE) {
+     random_movie <- movies_final[sample(nrow(movies_final), 1), ]
+     ran_imdb_rating <- random_movie[[3]]
+     ran_title <<- random_movie[[1]]
+     ran_crit_score <<- random_movie[[4]]
+     ran_genre <<-random_movie[[2]]
+     ran_run <- random_movie[[6]]
+     ran_win <- random_movie[[7]]
+     ran_mpaa <- random_movie[[5]]
+     df_pred <<- data.frame(critics_score  = ran_crit_score, genre = ran_genre, runtime = ran_run, best_pic_win = ran_win, mpaa_rating = ran_mpaa )
+     
+     ran_pred <<- predict(final_model, df_pred)
+     conf_int <<- predict(final_model, df_pred, interval="confidence")
+     
+     print(paste(ran_title, "genre:", ran_genre, "Predicted:", round (ran_pred, digits = 2), "Actcual imdb_rating:", ran_imdb_rating)); cat("Confidence Interval: fit, lwr, upr ", conf_int); cat(" ", sep="\n")
+     
+ }
+```
+
+PREDICTIONS: CURRENT SAMPLE
+Now run predictions for 2 randomly selected movies from the current dataframe  (NOTE - each time running the below chunk we get different movies - obviously - due to the randomness in the function )
+```{r}
+p1 <- fit_var(1)
+p2 <- fit_var(2)
+```
+Interpretation of prediction interval: current sample
+
+```{r}
+print(paste("We are 95 Percent confident, that all else being equal, the model predicts for Movie:", ran_title, "an imdb rating in the range of ", round(conf_int[2], digits = 2), "to", round(conf_int[3], digits = 2)))
+```
+PREDICTIONS: MOVIES FROM EXTERNAL SOURCES
+
+
+MOVIE 1: The Revenant (2015)
+Rotten TOmattoes Critics_score 78, imdb rating 8.0, runtime 156 minutes, Drama, best_picture award - No, mpaa_rating - R
+Data accessible at 
+https://www.imdb.com/title/tt1663202/?ref_=nmawd_awd_2
+https://www.rottentomatoes.com/m/the_revenant_2015
+```{r}
+df_out1 <<- data.frame(critics_score = 78, genre = "Drama",  runtime = 156, best_pic_win = "no",  mpaa_rating = "R")
+prediction1 <- predict(final_model, df_out1)
+#prediction1
+conf_int1 <- predict(final_model, df_out1, interval="confidence")
+print(paste("Predicted imdb_rating:", round(prediction1, digits = 4), "Actcual imdb_rating: 8.0" )); cat("Confidence Interval: fit, lwr, upr ", conf_int1); cat(" ", sep="\n")
+```
+"We are 95 Percent confident, that all else being equal, the model predicts for Movie: The Revenant an imdb rating between  7.38 to 7.76 on average.
+
+
+MOVIE 2, Split 2016
+ imdb_rating = 7.3,  PG-13 | 1h 57min | Horror, Thriller, best_pic_win = "no", critics_score = 77
+https://www.imdb.com/title/tt4972582/?pf_rd_m=A2FGELUUNOQJNL&pf_rd_p=ea4e08e1-c8a3-47b5-ac3a-75026647c16e&pf_rd_r=PEFYRGPG3WDJ36ETNG6D&pf_rd_s=center-1&pf_rd_t=15506&pf_rd_i=moviemeter&ref_=chtmvm_tt_96
+https://www.rottentomatoes.com/m/split_2017
+```{r}
+df_out2 <<- data.frame(critics_score = 77, genre = "Horror",  runtime = 117, best_pic_win = "no",  mpaa_rating = "PG-13")
+prediction2 <- predict(final_model, df_out2)
+#prediction1
+conf_int2 <- predict(final_model, df_out2, interval="confidence")
+print(paste("Predicted imdb_rating:", round(prediction2, digits = 4), "Actcual imdb_rating: 7.3" )); cat("Confidence Interval: fit, lwr, upr ", conf_int2); cat(" ", sep="\n")
+```
+"We are 95 Percent confident, that all else being equal, the model predicts for Movie: Split an imdb rating between 6.46 to 7.10 on average
+
+
+
+
+* * *
+
+## Part 6: Conclusion
+
+As it was observed the final_model presented above  shows rather accurate predictions. A potential bias to this model could have been Rotten Tomatoes critics_score with the same variable in our dataframe. One reason this variable could have introduced bias is that critics_score is somewhat equivalent, albeit with distinct methodological differences, movie rating system and generally if one movie is rated high on imdb it tends to have a high score on Rotten Tomatoes as well. HOWEVER< this is not always the case!
+
+
+
+
+
